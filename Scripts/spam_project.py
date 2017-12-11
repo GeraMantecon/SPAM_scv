@@ -23,9 +23,9 @@ def pre_process(stopword=False,punctuation=False,lematize=False):
         spams = f.readlines()
     spams = [eval(spam)['body'] for spam in spams]
     if stopwords:
-        spams = [filter(lambda x: x in set(stopwords.words("english")),spam.lower().strip()) for spam in spams]
+        spams = [" ".join([token for token in spam.lower().strip().split() if token not in set(stopwords.words("english"))]) for spam in spams]
     if punctuation:
-        spams = [filter(lambda x: x in set(string.punctuation),spam.lower().strip()) for spam in spams]
+        spams = [" ".join([re.sub(r'[^\w]', '', token) for token in spam.lower().strip().split() if token not in set(string.punctuation)]) for spam in spams]
     if lematize:
         tk = LemmaTokenizer()
         spams = [" ".join(tk(spam.lower().strip())) for spam in spams]
