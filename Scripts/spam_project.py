@@ -22,10 +22,10 @@ def pre_process(stopword=False,punctuation=False,lematize=False):
     with open('../Resources/spam.txt') as f:
         spams = f.readlines()
     spams = [eval(spam)['body'] for spam in spams]
-    if stopwords:
-        spams = [" ".join([token for token in spam.lower().strip().split() if token not in set(stopwords.words("english"))]) for spam in spams]
     if punctuation:
         spams = [" ".join([re.sub(r'[^\w]', '', token) for token in spam.lower().strip().split() if token not in set(string.punctuation)]) for spam in spams]
+    if stopwords:
+        spams = [" ".join([token for token in spam.lower().strip().split() if token not in set(stopwords.words("english"))]) for spam in spams]
     if lematize:
         tk = LemmaTokenizer()
         spams = [" ".join(tk(spam.lower().strip())) for spam in spams]
