@@ -10,8 +10,13 @@ import nltk
 import gensim
 import numpy as np
 import pandas as pd
-from parser import parse_raw_spam
-from parser import parse_raw_ham
+import spam_parser as prs
+import weka.core.jvm as jvm
+import weka.core.converters as converters
+import traceback
+import javabridge
+import weka.core.serialization as serialization
+import collections
 from plot import plot_clusters
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
@@ -20,6 +25,8 @@ from nltk.tree import Tree
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans, MiniBatchKMeans
 from sklearn import metrics
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.cross_validation import cross_val_score
 
 class LabeledLineSentence(object):
     def __init__(self, documents):
@@ -58,6 +65,29 @@ class TfidfEmbeddingVectorizer(object):
                         [np.zeros(self.dim)], axis=0)
                 for words in X
             ])
+
+def classification_test(trainset,feature,k):
+    print 'Classification 10fcv'
+    headers = list(trainset.columns.values)
+    headers = headers[:-1]
+    labels =  trainset['labels'].values
+    ctr = collections.Counter(labels)
+    features = trainset[headers].values
+    clf = RandomForestClassifier(n_estimators=10)
+    clf_score = cross_val_score(clf, features, labels, cv=10).mean()
+    with open('../Results/Classification_'+feature+'_'+str(k)+'.txt','w+') as f:
+        f.write(str(clf_score))
+        f.write(str(ctr))
+    print 'Done classficiation test'
+    print 'ACC Classification test 10-FCV: ' + str(clf_score)
+def print_labeled_tfidfs(tfidfs,vectorizer,k,feature,predict,spam=False):
+    df = pd.DataFrame(tfidfs.toarray(), columns=vectorizer.get_feature_names())
+    df['labels'] = pd.Series(predict, index=df.index)
+    if spam:
+        df.to_csv('../Results/Spam'+feature+'_'+str(k)+'.csv',index=False)
+    else:
+        df.to_csv('../Results/Ham'+feature+'_'+str(k)+'.csv',index=False)
+    print 'Salio'
 
 def get_continuous_chunks(text):
 	chunked = ne_chunk(pos_tag(word_tokenize(text)))
@@ -100,17 +130,6 @@ def generate_features(spam_messages, feature, english_only=False):
 	else:
 		spam_features = spam_messages
 	return spam_features
-def print_labeled_tfidfs(tfidfs,messages,vectorizer,labels,k,feature,spam=False):
-    tfidf = pd.DataFrame(tfidfs.toarray(),index=[index for index, value in enumerate(messages)],columns=vectorizer.get_feature_names())
-    if k >= 0:
-        new_df = pd.DataFrame(data=labels, index=[index for index, value in enumerate(labels)], columns=['Label'])
-    else:
-        new_df = pd.DataFrame(data=[-1 for label in labels], index=[index for index, value in enumerate(labels)], columns=['Label'])
-    final_df = pd.merge(tfidf,new_df,left_index=True,right_index=True)
-    if spam:
-        final_df.to_csv('../Results/Spam'+feature+'_'+str(k)+'.csv',index=False)
-    else:
-        final_df.to_csv('../Results/Ham'+feature+'_'+str(k)+'.csv',index=False)
 def train_models_clustering(spam_messages,spam_features,feature,k):
     km = KMeans(n_clusters=k, init='k-means++', max_iter=100, n_init=1, verbose=0)
     if feature == 'BOW':
@@ -121,21 +140,44 @@ def train_models_clustering(spam_messages,spam_features,feature,k):
         vectorizer = TfidfVectorizer(use_idf=True, ngram_range=(2,2),lowercase=True)
         tfidfs = vectorizer.fit_transform(spam_messages)
         results = km.fit_transform(tfidfs)
-        #print_labeled_tfidfs(tfidfs,spam_messages,vectorizer,km.labels_,k,feature,True)
+        predict = km.predict(tfidfs)
+        #=======================
+        df = pd.DataFrame(tfidfs.toarray(), columns=vectorizer.get_feature_names())
+        df['labels'] = pd.Series(predict, index=df.index)
+        classification_test(df,feature,k)
+        #print_labeled_tfidfs(tfidfs,vectorizer,k,feature,predict,True)
+        #=======================
     elif feature == 'TRIGRAMS':
         vectorizer = TfidfVectorizer(use_idf=True, ngram_range=(3,3),lowercase=True)
         tfidfs = vectorizer.fit_transform(spam_messages)
         results = km.fit_transform(tfidfs)
-        #print_labeled_tfidfs(tfidfs,spam_messages,vectorizer,km.labels_,k,feature,True)
+        predict = km.predict(tfidfs)
+        #=======================
+        df = pd.DataFrame(tfidfs.toarray(), columns=vectorizer.get_feature_names())
+        df['labels'] = pd.Series(predict, index=df.index)
+        classification_test(df,feature,k)
+        #print_labeled_tfidfs(tfidfs,vectorizer,k,feature,predict,True)
+        #=======================
     elif feature == 'W2V':
         vectorizer = TfidfEmbeddingVectorizer(spam_features)
         tfidfs = vectorizer.fit(spam_messages).transform(spam_messages)
         results = km.fit_transform(tfidfs)
-        #print_labeled_tfidfs(tfidfs,spam_messages,vectorizer,km.labels_,k,feature,True)
+        #=======================
+        df = pd.DataFrame(tfidfs.toarray(), columns=vectorizer.get_feature_names())
+        df['labels'] = pd.Series(predict, index=df.index)
+        classification_test(df,feature,k)
+        #predict = km.predict(spam_vectors)
+        #=======================
     elif feature == 'D2V':
         spam_vectors = spam_features.wv.syn0
         results = km.fit_transform(spam_vectors)
-        #print_labeled_tfidfs(tfidfs,spam_messages,vectorizer,km.labels_,k,feature,True)
+        predict = km.predict(spam_vectors)
+        #=======================
+        df = pd.DataFrame(tfidfs.toarray(), columns=vectorizer.get_feature_names())
+        df['labels'] = pd.Series(predict, index=df.index)
+        classification_test(df,feature,k)
+        #print_labeled_tfidfs(tfidfs,vectorizer,k,feature,predict,True)
+        #=======================
     elif feature == 'NAMED_ENTITIES':
         vocabulary = [token for spam in spam_features for token in word_tokenize(spam)]
         vocabulary = list(set(vocabulary))
@@ -156,7 +198,6 @@ def pre_process(stopword=False,punctuation=False,lematize=False,isSpam=False):
         path='../Resources/spam.txt'
     else:
         path='../Resources/ham.txt'
-    print path
     with open(path) as f:
 		spams = f.readlines()
     spams = [eval(spam)['body'] for spam in spams]
@@ -182,13 +223,17 @@ def main(argv):
         print 'Feature not recognized by program.'
         sys.exit()
     if not os.path.isfile('../Resources/spam.txt'):
-        parse_raw_spam()
+        prs.parse_raw_spam()
     if not os.path.isfile('../Resources/ham.txt'):
-        parse_raw_ham()
+        prs.parse_raw_ham()
     spam_messages = pre_process(args.stopword, args.punctuation, args.lematize,isSpam=True)
+    print 'Data pre-processed'
     spam_features = generate_features(spam_messages,args.FEATURE,args.english)
+    print 'Features generated'
     results,labels = train_models_clustering(spam_messages,spam_features,args.FEATURE,args.k)
+    print 'Model trained'
     score = metrics.silhouette_score(results, labels, metric='euclidean')
+    print 'Plotting...'
     plot_clusters(results,args.k,labels,args.FEATURE)
     print 'K-means with '+ str(args.k) +' clusters using '+ str(args.FEATURE) +' silhouette score: ' + str(score)
 if __name__ == '__main__':
